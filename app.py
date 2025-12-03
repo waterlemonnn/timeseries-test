@@ -12,27 +12,22 @@ st.set_page_config(page_title="Crypto Signal AI", layout="wide")
 st.title("🤖 Crypto Direction AI: Buy or Sell?")
 st.write("Model Deep Learning (LSTM) yang memprediksi **ARAH** pergerakan harga (Naik/Turun) dan tingkat **Volatilitas**.")
 
-# Sidebar
+# --- 2. SIDEBAR & LOAD DATA ---
 st.sidebar.header("Konfigurasi")
 ticker = st.sidebar.text_input("Ticker Symbol", value="BTC-USD")
-# Start date dihapus sesuai request, default load data dari 2020
 
-# --- 2. LOAD DATA (ANTI-GAGAL / RETRY LOGIC) ---
+# Fungsi Load Data (Download Full History)
 @st.cache_data
 def load_data(ticker):
     max_retries = 3
     for i in range(max_retries):
         try:
-            # Download data tanpa progress bar biar bersih
-            # Start fix dari 2020-01-01 sesuai request
-            data = yf.download(ticker, start="2020-01-01", end=pd.to_datetime("today"), progress=False)
+            # period="max" artinya ambil data dari awal koin itu lahir sampai sekarang
+            data = yf.download(ticker, period="max", progress=False)
             
-            # Cek apakah data kosong
             if len(data) > 0:
                 data.reset_index(inplace=True)
                 return data
-            
-            # Kalau kosong, tunggu 1 detik sebelum coba lagi
             time.sleep(1)
         except:
             time.sleep(1)
@@ -47,17 +42,34 @@ if data is None or data.empty:
 
 data_load_state.text(f'Data {ticker} berhasil dimuat!')
 
-# --- 3. PROSES PREDIKSI ---
+# --- 3. FILTER TANGGAL (Sesuai Request) ---
+# Kita ambil tanggal paling awal dan paling akhir dari data yang ditarik
+min_date = data['Date'].min().date()
+max_date = data['Date'].max().date()
+
+# Sidebar Input Tanggal
+# Default value = min_date (Data paling lama)
+start_user_date = st.sidebar.date_input(
+    "Tampilkan Grafik Sejak", 
+    value=min_date, 
+    min_value=min_date, 
+    max_value=max_date
+)
+
+# Filter data untuk VISUALISASI GRAFIK saja
+# (Prediksi tetep pake data terbaru, tapi grafik ngikutin mau user liat dari kapan)
+mask = (data['Date'].dt.date >= start_user_date)
+filtered_data = data.loc[mask]
+
+# --- 4. PROSES PREDIKSI (AI) ---
 # Load Model Klasifikasi
 try:
-    # PASTIKAN FILE INI ADALAH HASIL TRAINING BARU (KLASIFIKASI)
     model = load_model('direction_model.h5') 
 except:
     st.error("Model 'direction_model.h5' tidak ditemukan. Jalankan script training (train_direction.py) terlebih dahulu!")
     st.stop()
 
-# Preprocessing Data Terakhir
-# Kita hanya butuh data Close untuk input model
+# Preprocessing Data (Pake data full original biar akurat 60 hari terakhirnya)
 df_close = data[['Close']]
 dataset = df_close.values
 
@@ -67,38 +79,32 @@ scaled_data = scaler.fit_transform(dataset)
 # Ambil 60 hari terakhir buat nebak besok
 look_back = 60
 if len(scaled_data) < look_back:
-    st.error("Data tidak cukup untuk melakukan prediksi. Butuh minimal 60 hari.")
+    st.error("Data tidak cukup untuk melakukan prediksi.")
     st.stop()
 
 last_60_days = scaled_data[-look_back:]
 X_input = last_60_days.reshape(1, look_back, 1)
 
-# EKSEKUSI PREDIKSI (Outputnya probabilitas 0.0 s/d 1.0)
+# EKSEKUSI PREDIKSI
 prediction_prob = model.predict(X_input)[0][0]
 
 # Logic Sinyal (Threshold 0.5)
-# > 0.5 = AI yakin Naik
-# < 0.5 = AI yakin Turun
 threshold = 0.5
 if prediction_prob > threshold:
     signal = "NAIK (BULLISH) 🚀"
     color = "green"
-    # Confidence: Seberapa jauh dari 0.5?
     confidence = prediction_prob * 100
 else:
     signal = "TURUN (BEARISH) 🔻"
     color = "red"
-    # Kalau prob 0.2, berarti confidence turunnya 80% (1 - 0.2)
     confidence = (1 - prediction_prob) * 100
 
-# --- 4. HITUNG VOLATILITAS (RISK MANAGEMENT) ---
-# Menjawab request temen lu: "predict volatilitynya kek kira2 bakal fluctuate sebesar berapa"
-# Kita hitung standar deviasi return harian selama 30 hari terakhir
+# --- 5. HITUNG VOLATILITAS ---
+# Hitung volatilitas 30 hari terakhir (tetap dari data terbaru)
 data['Return'] = data['Close'].pct_change()
-# Dikali 100 biar jadi persen
 volatility_30d = data['Return'].tail(30).std() * 100 
 
-if volatility_30d > 4.0: # Batas risiko tinggi (Crypto emang volatil)
+if volatility_30d > 4.0:
     vol_status = "EXTREME RISK ⚡"
     advice = "Pasar sangat liar. Hindari leverage tinggi."
 elif volatility_30d > 2.0:
@@ -108,7 +114,7 @@ else:
     vol_status = "LOW RISK ✅"
     advice = "Pasar relatif tenang (Sideways/Stabil)."
 
-# --- 5. TAMPILAN DASHBOARD ---
+# --- 6. TAMPILAN DASHBOARD ---
 st.divider()
 
 # Kolom Dashboard Utama
@@ -130,17 +136,17 @@ with col2:
 
 with col3:
     st.subheader("Analisis Risiko")
-    # Delta color inverse: Merah kalau angkanya gede (High Risk)
     st.metric(label="Volatilitas (30 Hari)", value=f"{volatility_30d:.2f}%", delta=vol_status, delta_color="inverse")
     st.info(advice)
 
 st.divider()
 
-# Visualisasi Harga Terakhir (Full History dari 2020)
-st.subheader(f"Tren Harga {ticker} (Full History)")
+# Visualisasi Harga (Menggunakan Filter Tanggal User)
+st.subheader(f"Tren Harga {ticker}")
+st.caption(f"Menampilkan data dari {start_user_date} sampai {max_date}")
 
-# Mengambil data full untuk plot (bukan cuma tail)
-chart_data = data.set_index('Date')['Close']
+# Plotting data yang sudah difilter tanggalnya
+chart_data = filtered_data.set_index('Date')['Close']
 st.line_chart(chart_data)
 
 st.success("✅ Analisis Selesai. Gunakan sebagai referensi pendukung keputusan trading Anda.")
