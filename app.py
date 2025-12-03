@@ -15,7 +15,7 @@ st.write("Model Deep Learning (LSTM) yang memprediksi **ARAH** pergerakan harga 
 # Sidebar
 st.sidebar.header("Konfigurasi")
 ticker = st.sidebar.text_input("Ticker Symbol", value="BTC-USD")
-start_date = st.sidebar.date_input("Analisis Sejak", value=pd.to_datetime("2023-01-01"))
+# Start date dihapus sesuai request, default load data dari 2020
 
 # --- 2. LOAD DATA (ANTI-GAGAL / RETRY LOGIC) ---
 @st.cache_data
@@ -24,6 +24,7 @@ def load_data(ticker):
     for i in range(max_retries):
         try:
             # Download data tanpa progress bar biar bersih
+            # Start fix dari 2020-01-01 sesuai request
             data = yf.download(ticker, start="2020-01-01", end=pd.to_datetime("today"), progress=False)
             
             # Cek apakah data kosong
@@ -135,11 +136,11 @@ with col3:
 
 st.divider()
 
-# Visualisasi Harga Terakhir (Biar user tetep bisa liat tren)
-st.subheader(f"Tren Harga {ticker} Terakhir (90 Hari)")
+# Visualisasi Harga Terakhir (Full History dari 2020)
+st.subheader(f"Tren Harga {ticker} (Full History)")
 
-# Mengambil data terakhir untuk plot
-chart_data = data.set_index('Date')['Close'].tail(90)
+# Mengambil data full untuk plot (bukan cuma tail)
+chart_data = data.set_index('Date')['Close']
 st.line_chart(chart_data)
 
 st.success("✅ Analisis Selesai. Gunakan sebagai referensi pendukung keputusan trading Anda.")
